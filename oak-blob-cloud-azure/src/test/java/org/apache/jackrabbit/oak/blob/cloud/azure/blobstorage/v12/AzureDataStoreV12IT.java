@@ -57,8 +57,7 @@ public class AzureDataStoreV12IT {
 
     @Before
     public void setUp() throws DataStoreException, IOException {
-        store = new AzureDataStoreV12();
-        store.setProperties(azuriteProps("v12ds-" + System.nanoTime()));
+        store = new AzureDataStoreV12(azuriteProps("v12ds-" + System.nanoTime()));
         // 0% staging so all writes go directly to Azure — avoids local-staging code paths masking backend failures.
         store.setStagingSplitPercentage(0);
         store.init(folder.newFolder().getAbsolutePath());

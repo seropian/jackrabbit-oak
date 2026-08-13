@@ -36,21 +36,18 @@ import java.net.URI;
 import java.util.Properties;
 
 public class AzureDataStoreV12 extends AbstractSharedCachingDataStore implements ConfigurableDataRecordAccessProvider {
-    protected Properties properties;
+    protected final Properties properties;
     private int minRecordLength = 16 * 1024;
     private AzureBlobStoreBackendV12 azureBlobStoreBackend;
 
-    @Override
-    protected AbstractSharedBackend createBackend() {
-        azureBlobStoreBackend = new AzureBlobStoreBackendV12();
-        if (properties != null) {
-            azureBlobStoreBackend.setProperties(properties);
-        }
-        return azureBlobStoreBackend;
+    public AzureDataStoreV12(Properties properties) {
+        this.properties = properties;
     }
 
-    public void setProperties(final Properties properties) {
-        this.properties = properties;
+    @Override
+    protected AbstractSharedBackend createBackend() {
+        azureBlobStoreBackend = new AzureBlobStoreBackendV12(properties);
+        return azureBlobStoreBackend;
     }
 
     public SharedBackend getBackend() {

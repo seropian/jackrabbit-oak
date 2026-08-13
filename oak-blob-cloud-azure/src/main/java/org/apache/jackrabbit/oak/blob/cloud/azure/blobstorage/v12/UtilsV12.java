@@ -29,10 +29,10 @@ import org.apache.jackrabbit.oak.commons.PropertiesUtil;
 import org.apache.jackrabbit.oak.spi.blob.data.DataStoreException;
 import org.jetbrains.annotations.Nullable;
 
-import java.io.File;
-import java.io.FileInputStream;
 import java.io.IOException;
 import java.io.InputStream;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.net.InetSocketAddress;
 import java.util.Objects;
 import java.util.Properties;
@@ -47,7 +47,7 @@ final class UtilsV12 {
     /**
      * Returns proxy options when both host and port are non-blank, null otherwise.
      */
-    static ProxyOptions computeProxyOptions(@Nullable String proxyHost, @Nullable String proxyPort) {
+    static ProxyOptions createProxyOptions(@Nullable String proxyHost, @Nullable String proxyPort) {
         if (StringUtils.isNoneBlank(proxyHost, proxyPort)) {
             return new ProxyOptions(ProxyOptions.Type.HTTP,
                     new InetSocketAddress(proxyHost, Integer.parseInt(proxyPort)));
@@ -55,7 +55,7 @@ final class UtilsV12 {
         return null;
     }
 
-    public static RequestRetryOptions getRetryOptions(final String maxRequestRetryCount, Integer requestTimeout, String secondaryLocation) {
+    public static RequestRetryOptions createRetryOptions(final String maxRequestRetryCount, Integer requestTimeout, String secondaryLocation) {
         int retries = PropertiesUtil.toInteger(maxRequestRetryCount, -1);
         if (retries < 0) {
             if (secondaryLocation == null) {
@@ -80,7 +80,7 @@ final class UtilsV12 {
                 secondaryLocation);
     }
 
-    public static String getConnectionStringFromProperties(Properties properties) {
+    public static String createConnectionStringFromProperties(Properties properties) {
         String sasUri = properties.getProperty(AzureConstantsV12.AZURE_SAS, "");
         String blobEndpoint = properties.getProperty(AzureConstantsV12.AZURE_BLOB_ENDPOINT, "");
         String connectionString = properties.getProperty(AzureConstantsV12.AZURE_CONNECTION_STRING, "");
@@ -92,16 +92,16 @@ final class UtilsV12 {
         }
 
         if (!sasUri.isEmpty()) {
-            return getConnectionStringForSas(sasUri, blobEndpoint, accountName);
+            return createConnectionStringForSas(sasUri, blobEndpoint, accountName);
         }
 
-        return getConnectionString(
+        return createConnectionString(
                 accountName,
                 accountKey,
                 blobEndpoint);
     }
 
-    public static String getConnectionStringForSas(String sasUri, String blobEndpoint, String accountName) {
+    public static String createConnectionStringForSas(String sasUri, String blobEndpoint, String accountName) {
         if (StringUtils.isEmpty(blobEndpoint)) {
             return String.format("AccountName=%s;SharedAccessSignature=%s", accountName, sasUri);
         } else {
@@ -109,7 +109,7 @@ final class UtilsV12 {
         }
     }
 
-    public static String getConnectionString(final String accountName, final String accountKey, String blobEndpoint) {
+    public static String createConnectionString(final String accountName, final String accountKey, String blobEndpoint) {
         StringBuilder connString = new StringBuilder("DefaultEndpointsProtocol=https");
         connString.append(";AccountName=").append(accountName);
         connString.append(";AccountKey=").append(accountKey);
@@ -123,10 +123,10 @@ final class UtilsV12 {
      * Returns a {@link BlobContainerClient} from a connection string. The caller supplies a shared
      * {@link HttpClient}; pass {@code null} to use the SDK default.
      */
-    public static BlobContainerClient getBlobContainerFromConnectionString(final String azureConnectionString,
-                                                                           final String containerName,
-                                                                           @Nullable final RequestRetryOptions retryOptions,
-                                                                           @Nullable final HttpClient httpClient) throws DataStoreException {
+    public static BlobContainerClient createBlobContainerFromConnectionString(final String azureConnectionString,
+                                                                               final String containerName,
+                                                                               @Nullable final RequestRetryOptions retryOptions,
+                                                                               @Nullable final HttpClient httpClient) throws DataStoreException {
         try {
             BlobContainerClientBuilder builder = new BlobContainerClientBuilder()
                     .connectionString(azureConnectionString)
@@ -144,19 +144,9 @@ final class UtilsV12 {
         }
     }
 
-    /**
-     * Read a configuration properties file.
-     *
-     * @param fileName the properties file name
-     * @return the properties
-     * @throws java.io.IOException if the file doesn't exist
-     */
     public static Properties readConfig(String fileName) throws IOException {
-        if (!new File(fileName).exists()) {
-            throw new IOException("Config file not found. fileName=" + fileName);
-        }
         Properties prop = new Properties();
-        try (InputStream in = new FileInputStream(fileName)) {
+        try (InputStream in = Files.newInputStream(Path.of(fileName))) {
             prop.load(in);
         }
         return prop;

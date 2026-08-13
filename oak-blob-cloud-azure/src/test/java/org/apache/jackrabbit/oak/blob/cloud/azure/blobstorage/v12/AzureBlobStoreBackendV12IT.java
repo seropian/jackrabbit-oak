@@ -90,8 +90,7 @@ public class AzureBlobStoreBackendV12IT {
         containerName = "v12it-" + System.nanoTime();
         Properties props = azuriteProps(containerName);
 
-        AzureDataStoreV12 store = new AzureDataStoreV12();
-        store.setProperties(props);
+        AzureDataStoreV12 store = new AzureDataStoreV12(props);
         store.setStagingSplitPercentage(0); // disable local staging cache; all writes go directly to Azurite
         store.init(folder.newFolder().getAbsolutePath());
 
@@ -232,8 +231,7 @@ public class AzureBlobStoreBackendV12IT {
 
         for (int i = 0; i < n; i++) {
             futures.add(pool.submit(() -> {
-                AzureDataStoreV12 store = new AzureDataStoreV12();
-                store.setProperties(props);
+                AzureDataStoreV12 store = new AzureDataStoreV12(props);
                 store.setStagingSplitPercentage(0);
                 ready.countDown();
                 start.await();

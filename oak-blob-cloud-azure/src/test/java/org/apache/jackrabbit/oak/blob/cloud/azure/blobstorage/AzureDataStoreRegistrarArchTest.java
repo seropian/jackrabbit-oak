@@ -28,22 +28,22 @@ import static com.tngtech.archunit.lang.syntax.ArchRuleDefinition.noClasses;
 
 @RunWith(ArchUnitRunner.class)
 @AnalyzeClasses(packages = "org.apache.jackrabbit.oak.blob.cloud.azure.blobstorage")
-public class AzureDataStoreWrapperArchTest {
+public class AzureDataStoreRegistrarArchTest {
 
-    // v8 classes must not reference v12 — except AzureDataStoreWrapper (the intentional bridge).
+    // v8 classes must not reference v12 — except AzureDataStoreRegistrar (the intentional bridge).
     // Test classes (ending in Test/IT) are excluded: test infrastructure routinely crosses
     // package boundaries to access helpers like AzuriteDockerRule and AzureDataStoreV12.
     @ArchTest
     static final ArchRule v8MustNotReferenceV12 = noClasses()
             .that().resideInAPackage("..azure.blobstorage")
-            .and().areNotAssignableTo(AzureDataStoreWrapper.class)
-            .and().areNotAssignableTo(AzureDataStoreWrapper.DelegatingDataStore.class)
+            .and().areNotAssignableTo(AzureDataStoreRegistrar.class)
+            .and().areNotAssignableTo(AzureDataStoreRegistrar.DelegatingDataStore.class)
             .and().haveSimpleNameNotEndingWith("Test")
             .and().haveSimpleNameNotEndingWith("IT")
             .should().dependOnClassesThat()
             .resideInAPackage("..azure.blobstorage.v12..");
 
-    // v12 classes must not reference v8 — AzureDataStoreWrapper owns the one-way bridge.
+    // v12 classes must not reference v8 — AzureDataStoreRegistrar owns the one-way bridge.
     // Test classes (ending in Test/IT) are excluded for the same reason as above.
     @ArchTest
     static final ArchRule v12MustNotReferenceV8 = noClasses()

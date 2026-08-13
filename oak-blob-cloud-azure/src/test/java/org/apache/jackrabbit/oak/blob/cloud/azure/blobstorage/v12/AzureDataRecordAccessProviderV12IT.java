@@ -72,8 +72,7 @@ public class AzureDataRecordAccessProviderV12IT {
     public void setUp() throws DataStoreException, IOException {
         String containerName = "v12access-" + System.nanoTime();
 
-        store = new AzureDataStoreV12();
-        store.setProperties(azuriteProps(containerName));
+        store = new AzureDataStoreV12(azuriteProps(containerName));
         // 0% staging so all writes go directly to Azure — avoids local-staging code paths masking backend failures.
         store.setStagingSplitPercentage(0);
         store.init(folder.newFolder().getAbsolutePath());

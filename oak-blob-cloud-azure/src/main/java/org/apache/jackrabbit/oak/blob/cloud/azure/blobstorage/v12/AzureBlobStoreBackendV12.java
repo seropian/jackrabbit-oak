@@ -84,7 +84,6 @@ import java.util.Optional;
 import java.util.Properties;
 import java.util.UUID;
 import java.util.concurrent.TimeUnit;
-import java.util.concurrent.atomic.AtomicReference;
 
 import static org.apache.jackrabbit.oak.blob.cloud.azure.blobstorage.v12.AzureConstantsV12.*;
 import static org.apache.jackrabbit.oak.commons.StringUtils.emptyToNull;
@@ -103,9 +102,17 @@ class AzureBlobStoreBackendV12 extends AbstractSharedBackend {
 
     private static final String ERR_ID_NULL = "identifier must not be null";
 
-    private final AtomicReference<BlobContainerClient> azureContainerReference = new AtomicReference<>();
+    private BlobContainerClient azureContainer;
 
     private Properties properties;
+
+    AzureBlobStoreBackendV12() {
+    }
+
+    AzureBlobStoreBackendV12(Properties properties) {
+        this.properties = properties;
+    }
+
     private AzureBlobContainerProviderV12 azureBlobContainerProvider;
     private int concurrentRequestCount = AZURE_BLOB_DEFAULT_CONCURRENT_REQUEST_COUNT;
     private RequestRetryOptions retryOptions;
@@ -178,31 +185,22 @@ class AzureBlobStoreBackendV12 extends AbstractSharedBackend {
         this.properties = properties;
     }
 
-    // Lazy: retryOptions and azureBlobContainerProvider aren't set until initContainerConnection() runs.
-    protected BlobContainerClient getAzureContainer() throws DataStoreException {
-        BlobContainerClient existing = azureContainerReference.get();
-        if (existing != null) {
-            return existing;
+    protected BlobContainerClient getAzureContainer() {
+        if (azureContainer == null) {
+            throw new IllegalStateException("not initialized, call init() before use");
         }
-        // Synchronize so getBlobContainer() (which allocates a Netty event loop) is called
-        // at most once — the previous non-synchronized compareAndSet could lose a race and
-        // silently discard a fully initialised client including its event loop group.
-        synchronized (this) {
-            existing = azureContainerReference.get();
-            if (existing == null) {
-                existing = azureBlobContainerProvider.getBlobContainer();
-                azureContainerReference.set(existing);
-            }
-            return existing;
-        }
+        return azureContainer;
     }
 
-    // Swaps Thread Class Context Loader to this bundle's classloader so Azure SDK's ServiceLoader-based SPI discovery works in OSGi.
+    // The Azure SDK uses ServiceLoader to discover its HTTP client implementation (azure-core-http-netty)
+    // and the Jackson JSON provider. ServiceLoader.load() uses the thread context class loader, which
+    // in OSGi is the framework class loader — it can't see classes in other bundles. Swapping to this
+    // bundle's class loader lets the SDK find its SPI implementations on the bundle's classpath.
     // RuntimeExceptions (including BlobStorageException) propagate as-is; other checked exceptions are wrapped.
-    private <T> T withBundleContextClassLoader(AzureSDKCall<T> call) throws DataStoreException {
+    private static <T> T withBundleContextClassLoader(AzureSDKCall<T> call) throws DataStoreException {
         ClassLoader saved = Thread.currentThread().getContextClassLoader();
         try {
-            Thread.currentThread().setContextClassLoader(getClass().getClassLoader());
+            Thread.currentThread().setContextClassLoader(AzureBlobStoreBackendV12.class.getClassLoader());
             return call.execute();
         } catch (DataStoreException | RuntimeException e) {
             throw e;
@@ -213,14 +211,14 @@ class AzureBlobStoreBackendV12 extends AbstractSharedBackend {
         }
     }
 
-    private void withBundleContextClassLoaderVoid(AzureSDKCallVoid call) throws DataStoreException {
+    private static void withBundleContextClassLoaderVoid(AzureSDKCallVoid call) throws DataStoreException {
         withBundleContextClassLoader(() -> {
             call.execute();
             return null;
         });
     }
 
-    // Not idempotent — calling twice reinitializes the container connection and re-reads the reference key.
+    // Not idempotent — calling twice reinitialized the container connection and re-reads the reference key.
     // OSGi activation calls this exactly once; tests that need a fresh state must construct a new instance.
     @Override
     public void init() throws DataStoreException {
@@ -246,6 +244,11 @@ class AzureBlobStoreBackendV12 extends AbstractSharedBackend {
         }
     }
 
+    // Override in tests to inject a mock container without hitting a real Azure endpoint.
+    protected BlobContainerClient connectToContainer() throws DataStoreException {
+        return azureBlobContainerProvider.getOrCreateBlobContainer();
+    }
+
     private void initContainerConnection() throws DataStoreException {
         boolean createBlobContainer = PropertiesUtil.toBoolean(
                 emptyToNull(properties.getProperty(AzureConstantsV12.AZURE_CREATE_CONTAINER)), true);
@@ -269,11 +272,10 @@ class AzureBlobStoreBackendV12 extends AbstractSharedBackend {
         presignedDownloadURIVerifyExists = PropertiesUtil.toBoolean(
                 emptyToNull(properties.getProperty(AzureConstantsV12.PRESIGNED_HTTP_DOWNLOAD_URI_VERIFY_EXISTS)), true);
 
-        BlobContainerClient azureContainer = getAzureContainer();
+        azureContainer = connectToContainer();
 
         try {
-            if (createBlobContainer && Boolean.FALSE.equals(azureContainer.exists())) {
-                azureContainer.create();
+            if (createBlobContainer && azureContainer.createIfNotExists()) {
                 LOG.info("New container created. containerName={}", getContainerName());
             } else {
                 LOG.info("Reusing existing container. containerName={}", getContainerName());
@@ -285,13 +287,13 @@ class AzureBlobStoreBackendV12 extends AbstractSharedBackend {
     }
 
     private void initPresignedURIConfig() {
-        String putExpiry = properties.getProperty(AzureConstantsV12.PRESIGNED_HTTP_UPLOAD_URI_EXPIRY_SECONDS);
-        if (putExpiry != null) {
-            this.setHttpUploadURIExpirySeconds(capToDelegationKeyLifetime(Integer.parseInt(putExpiry)));
+        String uploadExpiry = properties.getProperty(AzureConstantsV12.PRESIGNED_HTTP_UPLOAD_URI_EXPIRY_SECONDS);
+        if (uploadExpiry != null) {
+            this.setHttpUploadURIExpirySeconds(capToDelegationKeyLifetime(Integer.parseInt(uploadExpiry)));
         }
-        String getExpiry = properties.getProperty(AzureConstantsV12.PRESIGNED_HTTP_DOWNLOAD_URI_EXPIRY_SECONDS);
-        if (getExpiry != null) {
-            this.setHttpDownloadURIExpirySeconds(capToDelegationKeyLifetime(Integer.parseInt(getExpiry)));
+        String downloadExpiry = properties.getProperty(AzureConstantsV12.PRESIGNED_HTTP_DOWNLOAD_URI_EXPIRY_SECONDS);
+        if (downloadExpiry != null) {
+            this.setHttpDownloadURIExpirySeconds(capToDelegationKeyLifetime(Integer.parseInt(downloadExpiry)));
             String cacheMaxSize = properties.getProperty(AzureConstantsV12.PRESIGNED_HTTP_DOWNLOAD_URI_CACHE_MAX_SIZE);
             if (cacheMaxSize != null) {
                 this.setHttpDownloadURICacheSize(Integer.parseInt(cacheMaxSize));
@@ -312,7 +314,7 @@ class AzureBlobStoreBackendV12 extends AbstractSharedBackend {
      */
     private int capToDelegationKeyLifetime(int configuredExpirySeconds) {
         long maxSeconds = AzureBlobContainerProviderV12.DELEGATION_KEY_LIFETIME.getSeconds();
-        if (azureBlobContainerProvider.authenticateViaServicePrincipal() && configuredExpirySeconds > maxSeconds) {
+        if (azureBlobContainerProvider.usesDelegationKeys() && configuredExpirySeconds > maxSeconds) {
             LOG.warn("Configured presigned URI expiry of {}s exceeds the {}s maximum lifetime of an Azure " +
                             "user delegation key; capping to {}s to avoid a SAS URI that silently stops working " +
                             "before its stated expiry.",
@@ -336,7 +338,7 @@ class AzureBlobStoreBackendV12 extends AbstractSharedBackend {
         if (properties.getProperty(AzureConstantsV12.AZURE_BLOB_REQUEST_TIMEOUT) != null) {
             requestTimeout = PropertiesUtil.toInteger(properties.getProperty(AzureConstantsV12.AZURE_BLOB_REQUEST_TIMEOUT), AZURE_BLOB_DEFAULT_REQUEST_TIMEOUT);
         }
-        retryOptions = UtilsV12.getRetryOptions(properties.getProperty(AzureConstantsV12.AZURE_BLOB_MAX_REQUEST_RETRY), requestTimeout, computeSecondaryLocationEndpoint());
+        retryOptions = UtilsV12.createRetryOptions(properties.getProperty(AzureConstantsV12.AZURE_BLOB_MAX_REQUEST_RETRY), requestTimeout, computeSecondaryLocationEndpoint());
 
         azureBlobContainerProvider = AzureBlobContainerProviderV12.Builder
                 .builder(properties.getProperty(AzureConstantsV12.AZURE_BLOB_CONTAINER_NAME))
@@ -482,7 +484,7 @@ class AzureBlobStoreBackendV12 extends AbstractSharedBackend {
 
     @Override
     public void close() {
-        azureContainerReference.set(null);
+        azureContainer = null;
         if (azureBlobContainerProvider != null) {
             azureBlobContainerProvider.close();
         }
@@ -1060,8 +1062,8 @@ class AzureBlobStoreBackendV12 extends AbstractSharedBackend {
 
         URI presignedURI = null;
         try {
-            String sharedAccessSignature = azureBlobContainerProvider.generateSharedAccessSignature(retryOptions, key,
-                    blobSasPermissions, expirySeconds, properties, optionalHeaders);
+            String sharedAccessSignature = azureBlobContainerProvider.generateSharedAccessSignature(key,
+                    blobSasPermissions, expirySeconds, optionalHeaders);
 
             // Shared access signature is returned encoded already.
             String uriString = String.format("https://%s/%s/%s?%s",
@@ -1167,19 +1169,11 @@ class AzureBlobStoreBackendV12 extends AbstractSharedBackend {
         return null;
     }
 
-    /**
-     * This interface together with {@link #withBundleContextClassLoader(AzureSDKCall)} enables calls to AzureSDK within the Class Loader of the current bundle
-     * @param <T>
-     */
     @FunctionalInterface
     private interface AzureSDKCall<T> {
         T execute() throws DataStoreException, IOException;
     }
 
-    /**
-     * Same as {@link AzureSDKCall} but without return value
-     * @see AzureSDKCall
-     */
     @FunctionalInterface
     private interface AzureSDKCallVoid {
         void execute() throws DataStoreException, IOException;

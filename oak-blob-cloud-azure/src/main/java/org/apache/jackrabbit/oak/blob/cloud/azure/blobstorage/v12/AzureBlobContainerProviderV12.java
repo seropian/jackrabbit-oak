@@ -1,20 +1,18 @@
 /*
- * Licensed to the Apache Software Foundation (ASF) under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership.  The ASF licenses this file
- * to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the "License"); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
  *
- *   http://www.apache.org/licenses/LICENSE-2.0
+ *      http://www.apache.org/licenses/LICENSE-2.0
  *
- * Unless required by applicable law or agreed to in writing,
- * software distributed under the License is distributed on an
- * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
- * KIND, either express or implied.  See the License for the
- * specific language governing permissions and limitations
- * under the License.
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  */
 package org.apache.jackrabbit.oak.blob.cloud.azure.blobstorage.v12;
 
@@ -45,179 +43,66 @@ import java.time.ZoneOffset;
 import java.util.Properties;
 import java.util.concurrent.atomic.AtomicReference;
 
-class AzureBlobContainerProviderV12 {
+/**
+ * Provides an authenticated {@link BlobContainerClient} and presigned SAS generation for Azure
+ * Blob Storage. Abstract base; {@link ServicePrincipalProvider} handles service-principal auth
+ * (user delegation keys), {@link SharedKeyProvider} handles connection strings, SAS tokens, and
+ * account keys. The {@link Builder} picks the concrete type based on the supplied credentials.
+ */
+abstract class AzureBlobContainerProviderV12 {
+
     private static final Logger log = LoggerFactory.getLogger(AzureBlobContainerProviderV12.class);
     private static final String DEFAULT_ENDPOINT_SUFFIX = "core.windows.net";
-    private final String azureConnectionString;
-    private final String accountName;
-    private final String containerName;
-    private final String blobEndpoint;
-    private final String sasToken;
-    private final String accountKey;
-    private final String tenantId;
-    private final String clientId;
-    private final String clientSecret;
-    // Retry policy fixed at activation time from the same properties as all other config.
-    private final RequestRetryOptions retryOptions;
-    // Shared HTTP client — one Netty event loop per provider instance, reused across all Azure SDK
-    // client builds. Proxy settings are fixed at activation time so one client suffices.
-    private final HttpClient httpClient;
-    // Cached credential — token cache is per-instance, recreating on every SAS call would
-    // force a new OAuth round-trip each time.
-    private final ClientSecretCredential clientSecretCredential;
-    // Cached service client for user-delegation SAS generation — avoids allocating a new Netty
-    // event loop and connection pool on every SAS call.
-    private final AtomicReference<BlobServiceClient> cachedBlobServiceClient = new AtomicReference<>();
-    // Cached container client for non-SP SAS signing — signing is local HMAC, so one client
-    // per activation is sufficient regardless of how many SAS calls are made.
-    private final AtomicReference<BlobContainerClient> cachedContainerForSigning = new AtomicReference<>();
-    // Cached user delegation key — Azure issues one key per round-trip; reusing it across all
-    // presigned URI generations in an upload/download avoids O(N) calls to the userdelegationkey
-    // endpoint (N = number of parts). Azure allows keys valid up to 7 days.
-    // Package-private for test injection.
-    final AtomicReference<CachedDelegationKey> cachedDelegationKey = new AtomicReference<>();
 
-    // Request keys for the full 7-day window so they cover any SAS expiry we'd generate.
-    // Also the hard upper bound Azure allows for a user delegation key's lifetime — package-private
-    // so callers can validate configured presigned-URI expiries against it (see AzureBlobStoreBackendV12).
     static final Duration DELEGATION_KEY_LIFETIME = Duration.ofDays(7);
-    // Renew early enough to cover clock skew between this host and Azure.
     private static final Duration DELEGATION_KEY_RENEWAL_BUFFER = Duration.ofSeconds(60);
 
-    private AzureBlobContainerProviderV12(Builder builder) {
-        this.azureConnectionString = builder.azureConnectionString;
-        this.accountName = builder.accountName;
-        this.containerName = builder.containerName;
-        this.blobEndpoint = builder.blobEndpoint;
-        this.sasToken = builder.sasToken;
-        this.accountKey = builder.accountKey;
-        this.tenantId = builder.tenantId;
-        this.clientId = builder.clientId;
-        this.clientSecret = builder.clientSecret;
-        this.clientSecretCredential = StringUtils.isNoneBlank(builder.clientId, builder.clientSecret, builder.tenantId)
-                ? new ClientSecretCredentialBuilder()
-                .clientId(builder.clientId)
-                .clientSecret(builder.clientSecret)
-                .tenantId(builder.tenantId)
-                .build()
-                : null;
-        this.retryOptions = builder.retryOptions;
-        this.httpClient = new NettyAsyncHttpClientBuilder()
-                .proxy(UtilsV12.computeProxyOptions(builder.proxyHost, builder.proxyPort))
-                .build();
-    }
+    // Shared state accessible to both subclasses and tests via the base type.
+    protected final String containerName;
+    final HttpClient httpClient;
+    final RequestRetryOptions retryOptions;
+    // Delegation-key cache — only used by ServicePrincipalProvider but kept here so tests can
+    // inject and inspect it via the base-type reference without casting.
+    final AtomicReference<CachedDelegationKey> cachedDelegationKey = new AtomicReference<>();
+    volatile boolean closed = false;
 
-    /**
-     * Constructs the Azure Storage endpoint URL.
-     * If a custom blobEndpoint is configured, it will be used.
-     * Otherwise, constructs the default endpoint using the account name.
-     *
-     * @param accountName        the storage account name
-     * @param customBlobEndpoint optional custom blob endpoint (can be null or empty)
-     * @return the endpoint URL to use
-     */
-    @NotNull
-    private static String getEndpointUrl(String accountName, String customBlobEndpoint) {
-        if (StringUtils.isNotBlank(customBlobEndpoint)) {
-            if (!customBlobEndpoint.startsWith("http://") && !customBlobEndpoint.startsWith("https://")) {
-                return "https://" + customBlobEndpoint;
-            }
-            if (customBlobEndpoint.startsWith("http://")) {
-                log.warn("Custom blob endpoint uses cleartext HTTP — credentials and data will be transmitted unencrypted: {}", customBlobEndpoint);
-            }
-            return customBlobEndpoint;
-        }
-        // Default public endpoint
-        return String.format("https://%s.blob.%s", accountName, DEFAULT_ENDPOINT_SUFFIX);
+    protected AzureBlobContainerProviderV12(String containerName, HttpClient httpClient,
+                                             RequestRetryOptions retryOptions) {
+        this.containerName = containerName;
+        this.httpClient = httpClient;
+        this.retryOptions = retryOptions;
     }
 
     public String getContainerName() {
         return containerName;
     }
 
+    /** Returns the configured connection string, or {@code null} for service-principal providers. */
+    @Nullable
     public String getAzureConnectionString() {
-        return azureConnectionString;
+        return null;
     }
 
     @NotNull
-    public BlobContainerClient getBlobContainer() throws DataStoreException {
-        // connection string will be given preference over service principals / sas / account key
-        if (StringUtils.isNotBlank(azureConnectionString)) {
-            log.debug("connecting to azure blob storage via azureConnectionString");
-            return UtilsV12.getBlobContainerFromConnectionString(getAzureConnectionString(), containerName, retryOptions, httpClient);
-        } else if (authenticateViaServicePrincipal()) {
-            log.debug("connecting to azure blob storage via service principal credentials");
-            // Reuse the cached BlobServiceClient — derives a container client from the same pipeline.
-            return getOrCreateBlobServiceClient().getBlobContainerClient(containerName);
-        } else if (StringUtils.isNotBlank(sasToken)) {
-            log.debug("connecting to azure blob storage via sas token");
-            final String connectionStringWithSasToken = UtilsV12.getConnectionStringForSas(sasToken, blobEndpoint, accountName);
-            return UtilsV12.getBlobContainerFromConnectionString(connectionStringWithSasToken, containerName, retryOptions, httpClient);
-        }
-        log.debug("connecting to azure blob storage via access key");
-        final String connectionStringWithAccountKey = UtilsV12.getConnectionString(accountName, accountKey, blobEndpoint);
-        return UtilsV12.getBlobContainerFromConnectionString(connectionStringWithAccountKey, containerName, retryOptions, httpClient);
-    }
+    public abstract BlobContainerClient getOrCreateBlobContainer() throws DataStoreException;
 
     @NotNull
-    public String generateSharedAccessSignature(RequestRetryOptions retryOptions,
-                                                String key,
-                                                BlobSasPermission blobSasPermissions,
-                                                int expirySeconds,
-                                                Properties properties) throws DataStoreException, URISyntaxException, InvalidKeyException {
-        return generateSharedAccessSignature(retryOptions, key, blobSasPermissions, expirySeconds, properties, null);
-    }
+    public abstract String generateSharedAccessSignature(String key,
+                                                          BlobSasPermission blobSasPermissions,
+                                                          int expirySeconds,
+                                                          @Nullable BlobSasHeadersV12 optionalHeaders)
+            throws DataStoreException, URISyntaxException, InvalidKeyException;
 
     /**
-     * Generates a shared access signature (SAS) for the specified blob with optional headers.
-     * This is the Azure SDK 12 equivalent of the V8 method that accepted {@code SharedAccessBlobHeaders}.
-     *
-     * @param retryOptions       retry options for the request
-     * @param key                the blob key
-     * @param blobSasPermissions the permissions for the SAS
-     * @param expirySeconds      the number of seconds until the SAS expires
-     * @param properties         additional properties
-     * @param optionalHeaders    optional headers to include in the SAS (can be null)
-     * @return the SAS query string
-     * @throws DataStoreException  if an error occurs
-     * @throws URISyntaxException  if the URI is invalid
-     * @throws InvalidKeyException if the key is invalid
+     * True when SAS tokens are signed with a user delegation key (service-principal auth).
+     * Used to enforce the 7-day cap on presigned URI expiry.
      */
-    @NotNull
-    public String generateSharedAccessSignature(RequestRetryOptions retryOptions,
-                                                String key,
-                                                BlobSasPermission blobSasPermissions,
-                                                int expirySeconds,
-                                                Properties properties,
-                                                @Nullable BlobSasHeadersV12 optionalHeaders) throws DataStoreException, URISyntaxException, InvalidKeyException {
-
-        OffsetDateTime expiry = OffsetDateTime.now(ZoneOffset.UTC).plusSeconds(expirySeconds);
-        BlobServiceSasSignatureValues serviceSasSignatureValues = new BlobServiceSasSignatureValues(expiry, blobSasPermissions);
-
-        // Apply headers if provided
-        if (optionalHeaders != null) {
-            optionalHeaders.applyTo(serviceSasSignatureValues);
-        }
-
-        // SAS signing is a local HMAC operation — no HTTP call is made. Use a cached client
-        // instead of getBlobContainer() which would allocate a new Netty event loop per call.
-        BlockBlobClient blob = getBlockBlobClientForSigning(key);
-
-        if (authenticateViaServicePrincipal()) {
-            return generateUserDelegationKeySignedSas(blob, serviceSasSignatureValues, expiry, properties);
-        }
-        return generateSas(blob, serviceSasSignatureValues);
+    boolean usesDelegationKeys() {
+        return false;
     }
 
-    @NotNull
-    public String generateUserDelegationKeySignedSas(BlockBlobClient blobClient,
-                                                     BlobServiceSasSignatureValues serviceSasSignatureValues,
-                                                     OffsetDateTime expiryTime,
-                                                     Properties properties) {
-
-        BlobServiceClient blobServiceClient = getOrCreateBlobServiceClient();
-        UserDelegationKey userDelegationKey = getOrRefreshDelegationKey(blobServiceClient, expiryTime);
-        return blobClient.generateUserDelegationSas(serviceSasSignatureValues, userDelegationKey);
+    void close() {
+        closed = true;
     }
 
     /**
@@ -232,7 +117,10 @@ class AzureBlobContainerProviderV12 {
         if (cached != null && cached.expiry.isAfter(sasExpiry.plus(DELEGATION_KEY_RENEWAL_BUFFER))) {
             return cached.key;
         }
-        synchronized (this) {
+        synchronized (cachedDelegationKey) {
+            if (closed) {
+                throw new IllegalStateException("AzureBlobContainerProviderV12 is closed");
+            }
             // Re-check inside the lock — another thread may have refreshed while we waited.
             cached = cachedDelegationKey.get();
             if (cached != null && cached.expiry.isAfter(sasExpiry.plus(DELEGATION_KEY_RENEWAL_BUFFER))) {
@@ -247,80 +135,18 @@ class AzureBlobContainerProviderV12 {
         }
     }
 
-    /**
-     * Returns a {@link BlockBlobClient} for SAS signing without creating a new Netty event loop.
-     * SAS generation is a local HMAC operation — no HTTP connection is needed. For SP auth, the
-     * cached {@link BlobServiceClient} pipeline is reused. For other auth types, one
-     * {@link BlobContainerClient} is created and cached for the provider's lifetime.
-     */
-    private BlockBlobClient getBlockBlobClientForSigning(String key) throws DataStoreException {
-        if (authenticateViaServicePrincipal()) {
-            // BlobServiceClient.getBlobContainerClient() shares the existing pipeline — no new Netty client.
-            return getOrCreateBlobServiceClient()
-                    .getBlobContainerClient(containerName)
-                    .getBlobClient(key)
-                    .getBlockBlobClient();
-        }
-        // Non-SP auth: cache one container client per activation (signing never makes HTTP calls).
-        BlobContainerClient container = cachedContainerForSigning.get();
-        if (container == null) {
-            synchronized (this) {
-                container = cachedContainerForSigning.get();
-                if (container == null) {
-                    container = getBlobContainer();
-                    cachedContainerForSigning.set(container);
-                }
-            }
-        }
-        return container.getBlobClient(key).getBlockBlobClient();
-    }
-
-    /**
-     * Releases cached Azure clients. The underlying Netty event loops are not eagerly shut down
-     * (the Azure SDK {@link com.azure.core.http.HttpClient} interface has no close contract), but
-     * clearing the references allows GC to reclaim them, preventing accumulation across OSGi
-     * restart cycles.
-     */
-    public void close() {
-        cachedBlobServiceClient.set(null);
-        cachedContainerForSigning.set(null);
-        cachedDelegationKey.set(null);
-        log.debug("AzureBlobContainerProviderV12 closed; cached Azure clients released");
-    }
-
-    // Package-private: AzureBlobStoreBackendV12 needs this to know whether presigned URIs will be
-    // signed with a user delegation key (and are therefore bounded by DELEGATION_KEY_LIFETIME).
-    boolean authenticateViaServicePrincipal() {
-        return StringUtils.isBlank(azureConnectionString) &&
-                StringUtils.isNoneBlank(accountName, tenantId, clientId, clientSecret);
-    }
-
-    private BlobServiceClient getOrCreateBlobServiceClient() {
-        BlobServiceClient client = cachedBlobServiceClient.get();
-        if (client == null) {
-            synchronized (this) {
-                client = cachedBlobServiceClient.get();
-                if (client == null) {
-                    BlobServiceClientBuilder builder = new BlobServiceClientBuilder()
-                            .endpoint(getEndpointUrl(accountName, blobEndpoint))
-                            .credential(clientSecretCredential)
-                            .addPolicy(AzureHttpRequestLoggingPolicyV12.INSTANCE)
-                            .httpClient(httpClient);
-                    if (retryOptions != null) {
-                        builder.retryOptions(retryOptions);
-                    }
-                    client = builder.buildClient();
-                    cachedBlobServiceClient.set(client);
-                }
-            }
-        }
-        return client;
-    }
-
     @NotNull
-    private String generateSas(BlockBlobClient blob,
-                               BlobServiceSasSignatureValues blobServiceSasSignatureValues) {
-        return blob.generateSas(blobServiceSasSignatureValues, null);
+    private static String getEndpointUrl(String accountName, String customBlobEndpoint) {
+        if (StringUtils.isNotBlank(customBlobEndpoint)) {
+            if (!customBlobEndpoint.startsWith("http://") && !customBlobEndpoint.startsWith("https://")) {
+                return "https://" + customBlobEndpoint;
+            }
+            if (customBlobEndpoint.startsWith("http://")) {
+                log.warn("Custom blob endpoint uses cleartext HTTP: {}", customBlobEndpoint);
+            }
+            return customBlobEndpoint;
+        }
+        return String.format("https://%s.blob.%s", accountName, DEFAULT_ENDPOINT_SUFFIX);
     }
 
     /** Holds a {@link UserDelegationKey} alongside the expiry we requested it with. */
@@ -334,7 +160,147 @@ class AzureBlobContainerProviderV12 {
         }
     }
 
-    public static class Builder {
+    // -------------------------------------------------------------------------
+    // Service-principal auth: user delegation key SAS
+    // -------------------------------------------------------------------------
+
+    /**
+     * Provider for service-principal authentication (tenant/client/secret). Builds a
+     * {@link BlobServiceClient} once on construction and signs SAS tokens with a user
+     * delegation key fetched from Azure.
+     */
+    static final class ServicePrincipalProvider extends AzureBlobContainerProviderV12 {
+
+        private final BlobServiceClient blobServiceClient;
+
+        ServicePrincipalProvider(String containerName, HttpClient httpClient,
+                                  RequestRetryOptions retryOptions,
+                                  String accountName, String blobEndpoint,
+                                  ClientSecretCredential credential) {
+            super(containerName, httpClient, retryOptions);
+            BlobServiceClientBuilder builder = new BlobServiceClientBuilder()
+                    .endpoint(getEndpointUrl(accountName, blobEndpoint))
+                    .credential(credential)
+                    .addPolicy(AzureHttpRequestLoggingPolicyV12.INSTANCE)
+                    .httpClient(httpClient);
+            if (retryOptions != null) {
+                builder.retryOptions(retryOptions);
+            }
+            this.blobServiceClient = builder.buildClient();
+        }
+
+        @Override
+        @NotNull
+        public BlobContainerClient getOrCreateBlobContainer() {
+            log.debug("connecting to azure blob storage via service principal credentials");
+            return blobServiceClient.getBlobContainerClient(containerName);
+        }
+
+        @Override
+        @NotNull
+        public String generateSharedAccessSignature(String key,
+                                                     BlobSasPermission blobSasPermissions,
+                                                     int expirySeconds,
+                                                     @Nullable BlobSasHeadersV12 optionalHeaders)
+                throws DataStoreException, URISyntaxException, InvalidKeyException {
+            OffsetDateTime expiry = OffsetDateTime.now(ZoneOffset.UTC).plusSeconds(expirySeconds);
+            BlobServiceSasSignatureValues values = new BlobServiceSasSignatureValues(expiry, blobSasPermissions);
+            if (optionalHeaders != null) {
+                optionalHeaders.applyTo(values);
+            }
+            BlockBlobClient blob = blobServiceClient.getBlobContainerClient(containerName)
+                    .getBlobClient(key).getBlockBlobClient();
+            UserDelegationKey delegationKey = getOrRefreshDelegationKey(blobServiceClient, expiry);
+            return blob.generateUserDelegationSas(values, delegationKey);
+        }
+
+        @Override
+        boolean usesDelegationKeys() {
+            return true;
+        }
+
+        @Override
+        void close() {
+            synchronized (cachedDelegationKey) {
+                closed = true;
+                cachedDelegationKey.set(null);
+            }
+        }
+    }
+
+    // -------------------------------------------------------------------------
+    // Shared-key / SAS / connection-string auth
+    // -------------------------------------------------------------------------
+
+    /**
+     * Provider for connection-string, SAS token, or account-key authentication. Builds a
+     * {@link BlobContainerClient} on each {@link #getOrCreateBlobContainer()} call and signs
+     * SAS tokens with the account key.
+     */
+    static final class SharedKeyProvider extends AzureBlobContainerProviderV12 {
+
+        private final String azureConnectionString;
+        private final String accountName;
+        private final String blobEndpoint;
+        private final String sasToken;
+        private final String accountKey;
+
+        SharedKeyProvider(String containerName, HttpClient httpClient,
+                           RequestRetryOptions retryOptions,
+                           String azureConnectionString, String accountName,
+                           String blobEndpoint, String sasToken, String accountKey) {
+            super(containerName, httpClient, retryOptions);
+            this.azureConnectionString = azureConnectionString;
+            this.accountName = accountName;
+            this.blobEndpoint = blobEndpoint;
+            this.sasToken = sasToken;
+            this.accountKey = accountKey;
+        }
+
+        @Override
+        @Nullable
+        public String getAzureConnectionString() {
+            return azureConnectionString;
+        }
+
+        @Override
+        @NotNull
+        public BlobContainerClient getOrCreateBlobContainer() throws DataStoreException {
+            if (StringUtils.isNotBlank(azureConnectionString)) {
+                log.debug("connecting to azure blob storage via azureConnectionString");
+                return UtilsV12.createBlobContainerFromConnectionString(azureConnectionString, containerName, retryOptions, httpClient);
+            } else if (StringUtils.isNotBlank(sasToken)) {
+                log.debug("connecting to azure blob storage via sas token");
+                String cs = UtilsV12.createConnectionStringForSas(sasToken, blobEndpoint, accountName);
+                return UtilsV12.createBlobContainerFromConnectionString(cs, containerName, retryOptions, httpClient);
+            }
+            log.debug("connecting to azure blob storage via access key");
+            String cs = UtilsV12.createConnectionString(accountName, accountKey, blobEndpoint);
+            return UtilsV12.createBlobContainerFromConnectionString(cs, containerName, retryOptions, httpClient);
+        }
+
+        @Override
+        @NotNull
+        public String generateSharedAccessSignature(String key,
+                                                     BlobSasPermission blobSasPermissions,
+                                                     int expirySeconds,
+                                                     @Nullable BlobSasHeadersV12 optionalHeaders)
+                throws DataStoreException, URISyntaxException, InvalidKeyException {
+            OffsetDateTime expiry = OffsetDateTime.now(ZoneOffset.UTC).plusSeconds(expirySeconds);
+            BlobServiceSasSignatureValues values = new BlobServiceSasSignatureValues(expiry, blobSasPermissions);
+            if (optionalHeaders != null) {
+                optionalHeaders.applyTo(values);
+            }
+            BlockBlobClient blob = getOrCreateBlobContainer().getBlobClient(key).getBlockBlobClient();
+            return blob.generateSas(values, null);
+        }
+    }
+
+    // -------------------------------------------------------------------------
+    // Builder
+    // -------------------------------------------------------------------------
+
+    static class Builder {
         private final String containerName;
         private String azureConnectionString;
         private String accountName;
@@ -426,7 +392,25 @@ class AzureBlobContainerProviderV12 {
         }
 
         public AzureBlobContainerProviderV12 build() {
-            return new AzureBlobContainerProviderV12(this);
+            HttpClient httpClient = new NettyAsyncHttpClientBuilder()
+                    .proxy(UtilsV12.createProxyOptions(proxyHost, proxyPort))
+                    .build();
+            if (isServicePrincipal()) {
+                ClientSecretCredential credential = new ClientSecretCredentialBuilder()
+                        .clientId(clientId)
+                        .clientSecret(clientSecret)
+                        .tenantId(tenantId)
+                        .build();
+                return new ServicePrincipalProvider(containerName, httpClient, retryOptions,
+                        accountName, blobEndpoint, credential);
+            }
+            return new SharedKeyProvider(containerName, httpClient, retryOptions,
+                    azureConnectionString, accountName, blobEndpoint, sasToken, accountKey);
+        }
+
+        private boolean isServicePrincipal() {
+            return StringUtils.isBlank(azureConnectionString) &&
+                    StringUtils.isNoneBlank(accountName, tenantId, clientId, clientSecret);
         }
     }
 }

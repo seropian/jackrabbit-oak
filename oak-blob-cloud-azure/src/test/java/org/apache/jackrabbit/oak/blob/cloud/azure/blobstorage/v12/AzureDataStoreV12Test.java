@@ -18,6 +18,8 @@
  */
 package org.apache.jackrabbit.oak.blob.cloud.azure.blobstorage.v12;
 
+import java.util.Properties;
+
 import org.apache.jackrabbit.oak.plugins.blob.datastore.directaccess.DataRecordUploadException;
 import org.apache.jackrabbit.oak.plugins.blob.datastore.directaccess.DataRecordUploadOptions;
 import org.apache.jackrabbit.oak.spi.blob.data.DataIdentifier;
@@ -38,7 +40,7 @@ public class AzureDataStoreV12Test {
      */
     @Test
     public void setBinaryTransferAccelerationEnabled_doesNotThrow() {
-        AzureDataStoreV12 store = new AzureDataStoreV12();
+        AzureDataStoreV12 store = new AzureDataStoreV12(new Properties());
         store.setBinaryTransferAccelerationEnabled(true);
         store.setBinaryTransferAccelerationEnabled(false);
         assertNotNull(store);
@@ -46,12 +48,12 @@ public class AzureDataStoreV12Test {
 
     @Test
     public void getMinRecordLength_default_returns16k() {
-        assertEquals(16 * 1024, new AzureDataStoreV12().getMinRecordLength());
+        assertEquals(16 * 1024, new AzureDataStoreV12(new Properties()).getMinRecordLength());
     }
 
     @Test
     public void setMinRecordLength_updatesValue() {
-        AzureDataStoreV12 store = new AzureDataStoreV12();
+        AzureDataStoreV12 store = new AzureDataStoreV12(new Properties());
         store.setMinRecordLength(32 * 1024);
         assertEquals(32 * 1024, store.getMinRecordLength());
     }
@@ -62,7 +64,7 @@ public class AzureDataStoreV12Test {
     @Test(expected = DataRecordUploadException.class)
     public void initiateDataRecordUpload_beforeInit_throwsDataRecordUploadException()
             throws DataRecordUploadException {
-        new AzureDataStoreV12().initiateDataRecordUpload(1024, 1);
+        new AzureDataStoreV12(new Properties()).initiateDataRecordUpload(1024, 1);
     }
 
     /**
@@ -71,7 +73,7 @@ public class AzureDataStoreV12Test {
     @Test(expected = DataRecordUploadException.class)
     public void initiateDataRecordUpload_withOptions_beforeInit_throwsDataRecordUploadException()
             throws DataRecordUploadException {
-        new AzureDataStoreV12().initiateDataRecordUpload(1024, 1, DataRecordUploadOptions.DEFAULT);
+        new AzureDataStoreV12(new Properties()).initiateDataRecordUpload(1024, 1, DataRecordUploadOptions.DEFAULT);
     }
 
     /**
@@ -80,7 +82,7 @@ public class AzureDataStoreV12Test {
     @Test(expected = DataRecordUploadException.class)
     public void completeDataRecordUpload_beforeInit_throwsDataRecordUploadException()
             throws DataRecordUploadException, DataStoreException {
-        new AzureDataStoreV12().completeDataRecordUpload("some-token");
+        new AzureDataStoreV12(new Properties()).completeDataRecordUpload("some-token");
     }
 
     /**
@@ -88,7 +90,7 @@ public class AzureDataStoreV12Test {
      */
     @Test
     public void getDownloadURI_beforeInit_returnsNull() {
-        assertNull(new AzureDataStoreV12().getDownloadURI(
+        assertNull(new AzureDataStoreV12(new Properties()).getDownloadURI(
                 new DataIdentifier("abc123"),
                 org.apache.jackrabbit.oak.plugins.blob.datastore.directaccess.DataRecordDownloadOptions.DEFAULT));
     }
@@ -98,7 +100,7 @@ public class AzureDataStoreV12Test {
      */
     @Test
     public void setDirectUploadURIExpirySeconds_beforeInit_doesNotThrow() {
-        AzureDataStoreV12 store = new AzureDataStoreV12();
+        AzureDataStoreV12 store = new AzureDataStoreV12(new Properties());
         store.setDirectUploadURIExpirySeconds(300);
         assertNotNull(store); // setter must not NPE before init(); store remains usable
     }
@@ -108,7 +110,7 @@ public class AzureDataStoreV12Test {
      */
     @Test
     public void setDirectDownloadURIExpirySeconds_beforeInit_doesNotThrow() {
-        AzureDataStoreV12 store = new AzureDataStoreV12();
+        AzureDataStoreV12 store = new AzureDataStoreV12(new Properties());
         store.setDirectDownloadURIExpirySeconds(300);
         assertNotNull(store);
     }
@@ -118,7 +120,7 @@ public class AzureDataStoreV12Test {
      */
     @Test
     public void setDirectDownloadURICacheSize_beforeInit_doesNotThrow() {
-        AzureDataStoreV12 store = new AzureDataStoreV12();
+        AzureDataStoreV12 store = new AzureDataStoreV12(new Properties());
         store.setDirectDownloadURICacheSize(100);
         assertNotNull(store);
     }

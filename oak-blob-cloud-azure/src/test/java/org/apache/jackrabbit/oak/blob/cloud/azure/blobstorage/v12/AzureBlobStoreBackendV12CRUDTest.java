@@ -86,6 +86,11 @@ public class AzureBlobStoreBackendV12CRUDTest {
             protected BlobContainerClient getAzureContainer() {
                 return container;
             }
+
+            @Override
+            protected BlobContainerClient connectToContainer() {
+                return container;
+            }
         };
     }
 
@@ -356,31 +361,31 @@ public class AzureBlobStoreBackendV12CRUDTest {
 
     @Test
     public void init_lowConcurrentRequestCount_clampedToDefault_andReusesExistingContainer() throws Exception {
-        when(container.exists()).thenReturn(true); // reuse path
+        when(container.createIfNotExists()).thenReturn(false); // already exists, not created
         Properties p = baseInitProps();
         p.setProperty(AzureConstantsV12.AZURE_BLOB_CONCURRENT_REQUESTS_PER_OPERATION, "0"); // below min → clamp
         backend.setProperties(p);
 
         backend.init();
 
-        verify(container, never()).create();
+        verify(container).createIfNotExists();
     }
 
     @Test
     public void init_highConcurrentRequestCount_clampedToMax_andCreatesMissingContainer() throws Exception {
-        when(container.exists()).thenReturn(false); // create path (createContainer defaults true)
+        when(container.createIfNotExists()).thenReturn(true); // container was created
         Properties p = baseInitProps();
         p.setProperty(AzureConstantsV12.AZURE_BLOB_CONCURRENT_REQUESTS_PER_OPERATION, "9999"); // above max → clamp
         backend.setProperties(p);
 
         backend.init();
 
-        verify(container).create();
+        verify(container).createIfNotExists();
     }
 
     @Test
     public void init_withSecondaryLocationAndPresignedConfig_parsesAllOptions() throws Exception {
-        when(container.exists()).thenReturn(true);
+        when(container.createIfNotExists()).thenReturn(false);
         Properties p = baseInitProps();
         p.setProperty(AzureConstantsV12.AZURE_BLOB_ENABLE_SECONDARY_LOCATION_NAME, "true");
         p.setProperty(AzureConstantsV12.AZURE_BLOB_REQUEST_TIMEOUT, "30");
@@ -394,19 +399,19 @@ public class AzureBlobStoreBackendV12CRUDTest {
         backend.setProperties(p);
 
         backend.init();
-        verify(container).exists();
+        verify(container).createIfNotExists();
     }
 
     @Test
     public void init_downloadExpiryWithoutCacheSize_defaultsCacheToZero() throws Exception {
-        when(container.exists()).thenReturn(true);
+        when(container.createIfNotExists()).thenReturn(false);
         Properties p = baseInitProps();
         p.setProperty(AzureConstantsV12.PRESIGNED_HTTP_DOWNLOAD_URI_EXPIRY_SECONDS, "600");
         // No cache max size set → exercises the else branch that sets cache size to 0.
         backend.setProperties(p);
 
         backend.init();
-        verify(container).exists();
+        verify(container).createIfNotExists();
     }
 
     // 7 days, the hard limit of an Azure user delegation key's lifetime.
@@ -414,7 +419,7 @@ public class AzureBlobStoreBackendV12CRUDTest {
 
     @Test
     public void init_presignedExpiryExceedsDelegationKeyLifetime_withServicePrincipal_capsToMax() throws Exception {
-        when(container.exists()).thenReturn(true);
+        when(container.createIfNotExists()).thenReturn(false);
         Properties p = baseInitProps();
         p.setProperty(AzureConstantsV12.AZURE_TENANT_ID, "tenant");
         p.setProperty(AzureConstantsV12.AZURE_CLIENT_ID, "client");
@@ -431,7 +436,7 @@ public class AzureBlobStoreBackendV12CRUDTest {
 
     @Test
     public void init_presignedExpiryExceedsDelegationKeyLifetime_withoutServicePrincipal_notCapped() throws Exception {
-        when(container.exists()).thenReturn(true);
+        when(container.createIfNotExists()).thenReturn(false);
         Properties p = baseInitProps();
         int uncappedExpiry = DELEGATION_KEY_LIFETIME_SECONDS + 100_000;
         p.setProperty(AzureConstantsV12.PRESIGNED_HTTP_UPLOAD_URI_EXPIRY_SECONDS, String.valueOf(uncappedExpiry));

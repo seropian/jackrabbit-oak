@@ -175,14 +175,14 @@ public class AzureBlobStoreBackendV12Test {
 
     static class FailingContainerBackend extends AzureBlobStoreBackendV12 {
         @Override
-        protected BlobContainerClient getAzureContainer() throws DataStoreException {
-            throw new DataStoreException("simulated Azure connectivity failure");
+        protected BlobContainerClient getAzureContainer() {
+            throw new RuntimeException("simulated Azure connectivity failure");
         }
     }
 
     static class FailingUploadBackend extends AzureBlobStoreBackendV12 {
         @Override
-        protected BlobContainerClient getAzureContainer() throws DataStoreException {
+        protected BlobContainerClient getAzureContainer() {
             BlobContainerClient container = mock(BlobContainerClient.class);
             BlobClient blobClient = mock(BlobClient.class);
             BlockBlobClient blockBlobClient = mock(BlockBlobClient.class);

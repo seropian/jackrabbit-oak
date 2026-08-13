@@ -18,7 +18,6 @@
  */
 package org.apache.jackrabbit.oak.blob.cloud.azure.blobstorage;
 
-import org.apache.commons.lang3.StringUtils;
 import org.apache.jackrabbit.oak.blob.cloud.azure.blobstorage.v12.AzureDataStoreV12;
 import org.apache.jackrabbit.oak.commons.PropertiesUtil;
 import org.apache.jackrabbit.oak.commons.properties.SystemPropertySupplier;
@@ -70,21 +69,19 @@ import java.util.Properties;
  * + AzureSDKConditionGate) that caused deadlocks during runtime OSGi service swap.
  */
 @Component(
-        name = AzureDataStoreWrapper.NAME,
-        configurationPid = AzureDataStoreWrapper.NAME,
+        name = AzureDataStoreRegistrar.NAME,
+        configurationPid = AzureDataStoreRegistrar.NAME,
         configurationPolicy = ConfigurationPolicy.REQUIRE
 )
-public class AzureDataStoreWrapper extends AbstractDataStoreService {
+public class AzureDataStoreRegistrar extends AbstractDataStoreService {
 
-    private static final Logger log = LoggerFactory.getLogger(AzureDataStoreWrapper.class);
+    private static final Logger log = LoggerFactory.getLogger(AzureDataStoreRegistrar.class);
 
     // Intentionally set to the legacy v8 PID rather than this class's own FQN.
     // Existing OSGi configurations reference the v8 PID, so reusing it here means
-    // no config migration is required when switching to this wrapper.
+    // no config migration is required when switching to this registrar.
     public static final String NAME = "org.apache.jackrabbit.oak.plugins.blob.datastore.AzureDataStore";
 
-    // Same name for now; kept as separate constants so they can diverge if the sources need different keys later.
-    static final String ENV_VAR_V12_ENABLED = "blobstoreAzureV12Enabled";
     static final String OSGI_CONFIG_V12_ENABLED = "blobstoreAzureV12Enabled";
     static final String JVM_PROPERTY_V12_ENABLED = "blob.azure.v12.enabled";
     // Package-private so DelegatingDataStore (inner class) and same-package tests can reach it without reflection.
@@ -104,8 +101,9 @@ public class AzureDataStoreWrapper extends AbstractDataStoreService {
     }
 
     /**
-     * Priority: JVM property (test/local override) > env var (fleet-wide container config) > OSGi config (normal production path).
-     * Higher-authority sources win so operators can override without touching OSGi config.
+     * Priority: JVM property (test/local override) > OSGi config (normal production path).
+     * To supply this flag from an environment variable, use your OSGi framework's env-var
+     * substitution in the config file (e.g. {@code blobstoreAzureV12Enabled=$&#123;env:MY_VAR&#125;}).
      */
     static boolean getUseV12Value(Map<String, Object> config) {
         if (System.getProperty(JVM_PROPERTY_V12_ENABLED) != null) {
@@ -113,12 +111,6 @@ public class AzureDataStoreWrapper extends AbstractDataStoreService {
                     .loggingTo(log)
                     .formatSetMessage((name, useV12) -> "Azure SDK v12 flag: JVM property " + name + "=" + useV12)
                     .get();
-        }
-        String envVar = System.getenv(ENV_VAR_V12_ENABLED);
-        if (StringUtils.isNotBlank(envVar)) {
-            boolean useV12 = Boolean.parseBoolean(envVar);
-            log.info("Azure SDK v12 flag: environment variable {}={}", ENV_VAR_V12_ENABLED, useV12);
-            return useV12;
         }
         if (config.containsKey(OSGI_CONFIG_V12_ENABLED)) {
             boolean useV12 = PropertiesUtil.toBoolean(config.get(OSGI_CONFIG_V12_ENABLED), false);
@@ -136,9 +128,7 @@ public class AzureDataStoreWrapper extends AbstractDataStoreService {
     }
 
     static AbstractSharedCachingDataStore createV12Store(Properties props) {
-        AzureDataStoreV12 v12 = new AzureDataStoreV12();
-        v12.setProperties(props);
-        return v12;
+        return new AzureDataStoreV12(props);
     }
 
     private static Properties toProperties(Map<String, Object> config) {
