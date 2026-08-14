@@ -36,38 +36,38 @@ import static org.junit.Assert.assertTrue;
 public class UtilsV12Test {
 
     @Test
-    public void getConnectionStringForSas_withBlobEndpoint_usesBlobEndpointFormat() {
-        String result = UtilsV12.getConnectionStringForSas("mySas", "https://myaccount.blob.core.windows.net", "myaccount");
+    public void createConnectionStringForSas_withBlobEndpoint_usesBlobEndpointFormat() {
+        String result = UtilsV12.createConnectionStringForSas("mySas", "https://myaccount.blob.core.windows.net", "myaccount");
         assertTrue(result.startsWith("BlobEndpoint=https://myaccount.blob.core.windows.net"));
         assertTrue(result.contains("SharedAccessSignature=mySas"));
     }
 
     @Test
-    public void getConnectionStringForSas_noBlobEndpoint_usesAccountNameFormat() {
-        String result = UtilsV12.getConnectionStringForSas("mySas", "", "myaccount");
+    public void createConnectionStringForSas_noBlobEndpoint_usesAccountNameFormat() {
+        String result = UtilsV12.createConnectionStringForSas("mySas", "", "myaccount");
         assertTrue(result.startsWith("AccountName=myaccount"));
         assertTrue(result.contains("SharedAccessSignature=mySas"));
     }
 
     @Test
-    public void getConnectionString_withBlobEndpoint_includesEndpointInString() {
-        String result = UtilsV12.getConnectionString("acc", "key123", "https://custom.endpoint.net");
+    public void createConnectionString_withBlobEndpoint_includesEndpointInString() {
+        String result = UtilsV12.createConnectionString("acc", "key123", "https://custom.endpoint.net");
         assertTrue(result.contains("AccountName=acc"));
         assertTrue(result.contains("AccountKey=key123"));
         assertTrue(result.contains("BlobEndpoint=https://custom.endpoint.net"));
     }
 
     @Test
-    public void getConnectionString_noBlobEndpoint_omitsBlobEndpointField() {
-        String result = UtilsV12.getConnectionString("acc", "key123", null);
+    public void createConnectionString_noBlobEndpoint_omitsBlobEndpointField() {
+        String result = UtilsV12.createConnectionString("acc", "key123", null);
         assertTrue(result.contains("AccountName=acc"));
         assertTrue(result.contains("AccountKey=key123"));
         assertFalse(result.contains("BlobEndpoint"));
     }
 
     @Test
-    public void getConnectionString_emptyEndpoint_omitsBlobEndpointField() {
-        String result = UtilsV12.getConnectionString("acc", "key123", "");
+    public void createConnectionString_emptyEndpoint_omitsBlobEndpointField() {
+        String result = UtilsV12.createConnectionString("acc", "key123", "");
         assertFalse(result.contains("BlobEndpoint"));
     }
 
@@ -75,22 +75,22 @@ public class UtilsV12Test {
      * Connection string takes priority over SAS and account key.
      */
     @Test
-    public void getConnectionStringFromProperties_explicitConnectionString_takesPriority() {
+    public void createConnectionStringFromProperties_explicitConnectionString_takesPriority() {
         Properties p = new Properties();
         p.setProperty(AzureConstantsV12.AZURE_CONNECTION_STRING, "explicit-connection-string");
         p.setProperty(AzureConstantsV12.AZURE_SAS, "should-not-be-used");
-        assertEquals("explicit-connection-string", UtilsV12.getConnectionStringFromProperties(p));
+        assertEquals("explicit-connection-string", UtilsV12.createConnectionStringFromProperties(p));
     }
 
     /**
      * SAS URI is used when no explicit connection string is present.
      */
     @Test
-    public void getConnectionStringFromProperties_sasUri_usedWhenNoConnectionString() {
+    public void createConnectionStringFromProperties_sasUri_usedWhenNoConnectionString() {
         Properties p = new Properties();
         p.setProperty(AzureConstantsV12.AZURE_SAS, "mySas");
         p.setProperty(AzureConstantsV12.AZURE_STORAGE_ACCOUNT_NAME, "acc");
-        String result = UtilsV12.getConnectionStringFromProperties(p);
+        String result = UtilsV12.createConnectionStringFromProperties(p);
         assertTrue(result.contains("mySas"));
     }
 
@@ -98,11 +98,11 @@ public class UtilsV12Test {
      * Falls back to account name + key when neither connection string nor SAS is set.
      */
     @Test
-    public void getConnectionStringFromProperties_accountKey_fallbackWhenNoSas() {
+    public void createConnectionStringFromProperties_accountKey_fallbackWhenNoSas() {
         Properties p = new Properties();
         p.setProperty(AzureConstantsV12.AZURE_STORAGE_ACCOUNT_NAME, "acc");
         p.setProperty(AzureConstantsV12.AZURE_STORAGE_ACCOUNT_KEY, "key123");
-        String result = UtilsV12.getConnectionStringFromProperties(p);
+        String result = UtilsV12.createConnectionStringFromProperties(p);
         assertTrue(result.contains("AccountName=acc"));
         assertTrue(result.contains("AccountKey=key123"));
     }
@@ -136,24 +136,24 @@ public class UtilsV12Test {
      * A negative retry count means "use SDK defaults" — return null so the SDK applies its own policy.
      */
     @Test
-    public void getRetryOptions_negativeCount_returnsNull() {
-        assertNull(UtilsV12.getRetryOptions("-1", null, null));
+    public void createRetryOptions_negativeCount_returnsNull() {
+        assertNull(UtilsV12.createRetryOptions("-1", null, null));
     }
 
     /**
      * Zero retries → fixed policy with maxTries=1 (no retry).
      */
     @Test
-    public void getRetryOptions_zeroRetries_returnsNonNull() {
-        assertNotNull(UtilsV12.getRetryOptions("0", null, null));
+    public void createRetryOptions_zeroRetries_returnsNonNull() {
+        assertNotNull(UtilsV12.createRetryOptions("0", null, null));
     }
 
     /**
      * Positive retry count → exponential policy.
      */
     @Test
-    public void getRetryOptions_positiveCount_returnsNonNull() {
-        assertNotNull(UtilsV12.getRetryOptions("3", null, null));
+    public void createRetryOptions_positiveCount_returnsNonNull() {
+        assertNotNull(UtilsV12.createRetryOptions("3", null, null));
     }
 
     /**
@@ -162,8 +162,8 @@ public class UtilsV12Test {
      * retry count, with the secondary host set.
      */
     @Test
-    public void getRetryOptions_negativeCountWithSecondaryLocation_returnsOptionsWithSecondaryHost() {
-        RequestRetryOptions options = UtilsV12.getRetryOptions("-1", null, "https://account-secondary.blob.core.windows.net");
+    public void createRetryOptions_negativeCountWithSecondaryLocation_returnsOptionsWithSecondaryHost() {
+        RequestRetryOptions options = UtilsV12.createRetryOptions("-1", null, "https://account-secondary.blob.core.windows.net");
         assertNotNull(options);
         assertEquals("https://account-secondary.blob.core.windows.net", options.getSecondaryHost());
         assertEquals(4, options.getMaxTries());

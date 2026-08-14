@@ -55,7 +55,7 @@ final class UtilsV12 {
         return null;
     }
 
-    public static RequestRetryOptions getRetryOptions(final String maxRequestRetryCount, Integer requestTimeout, String secondaryLocation) {
+    public static RequestRetryOptions createRetryOptions(final String maxRequestRetryCount, Integer requestTimeout, String secondaryLocation) {
         int retries = PropertiesUtil.toInteger(maxRequestRetryCount, -1);
         if (retries < 0) {
             if (secondaryLocation == null) {
@@ -80,7 +80,7 @@ final class UtilsV12 {
                 secondaryLocation);
     }
 
-    public static String getConnectionStringFromProperties(Properties properties) {
+    public static String createConnectionStringFromProperties(Properties properties) {
         String sasUri = properties.getProperty(AzureConstantsV12.AZURE_SAS, "");
         String blobEndpoint = properties.getProperty(AzureConstantsV12.AZURE_BLOB_ENDPOINT, "");
         String connectionString = properties.getProperty(AzureConstantsV12.AZURE_CONNECTION_STRING, "");
@@ -92,16 +92,16 @@ final class UtilsV12 {
         }
 
         if (!sasUri.isEmpty()) {
-            return getConnectionStringForSas(sasUri, blobEndpoint, accountName);
+            return createConnectionStringForSas(sasUri, blobEndpoint, accountName);
         }
 
-        return getConnectionString(
+        return createConnectionString(
                 accountName,
                 accountKey,
                 blobEndpoint);
     }
 
-    public static String getConnectionStringForSas(String sasUri, String blobEndpoint, String accountName) {
+    public static String createConnectionStringForSas(String sasUri, String blobEndpoint, String accountName) {
         if (StringUtils.isEmpty(blobEndpoint)) {
             return String.format("AccountName=%s;SharedAccessSignature=%s", accountName, sasUri);
         } else {
@@ -109,7 +109,7 @@ final class UtilsV12 {
         }
     }
 
-    public static String getConnectionString(final String accountName, final String accountKey, String blobEndpoint) {
+    public static String createConnectionString(final String accountName, final String accountKey, String blobEndpoint) {
         StringBuilder connString = new StringBuilder("DefaultEndpointsProtocol=https");
         connString.append(";AccountName=").append(accountName);
         connString.append(";AccountKey=").append(accountKey);
@@ -123,7 +123,7 @@ final class UtilsV12 {
      * Returns a {@link BlobContainerClient} from a connection string. The caller supplies a shared
      * {@link HttpClient}; pass {@code null} to use the SDK default.
      */
-    public static BlobContainerClient getBlobContainerFromConnectionString(final String azureConnectionString,
+    public static BlobContainerClient createBlobContainerFromConnectionString(final String azureConnectionString,
                                                                            final String containerName,
                                                                            @Nullable final RequestRetryOptions retryOptions,
                                                                            @Nullable final HttpClient httpClient) throws DataStoreException {

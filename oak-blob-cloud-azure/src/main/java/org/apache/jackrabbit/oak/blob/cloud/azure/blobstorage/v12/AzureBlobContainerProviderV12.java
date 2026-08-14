@@ -144,19 +144,19 @@ class AzureBlobContainerProviderV12 {
         // connection string will be given preference over service principals / sas / account key
         if (StringUtils.isNotBlank(azureConnectionString)) {
             log.debug("connecting to azure blob storage via azureConnectionString");
-            return UtilsV12.getBlobContainerFromConnectionString(getAzureConnectionString(), containerName, retryOptions, httpClient);
+            return UtilsV12.createBlobContainerFromConnectionString(getAzureConnectionString(), containerName, retryOptions, httpClient);
         } else if (authenticateViaServicePrincipal()) {
             log.debug("connecting to azure blob storage via service principal credentials");
             // Reuse the cached BlobServiceClient — derives a container client from the same pipeline.
             return getOrCreateBlobServiceClient().getBlobContainerClient(containerName);
         } else if (StringUtils.isNotBlank(sasToken)) {
             log.debug("connecting to azure blob storage via sas token");
-            final String connectionStringWithSasToken = UtilsV12.getConnectionStringForSas(sasToken, blobEndpoint, accountName);
-            return UtilsV12.getBlobContainerFromConnectionString(connectionStringWithSasToken, containerName, retryOptions, httpClient);
+            final String connectionStringWithSasToken = UtilsV12.createConnectionStringForSas(sasToken, blobEndpoint, accountName);
+            return UtilsV12.createBlobContainerFromConnectionString(connectionStringWithSasToken, containerName, retryOptions, httpClient);
         }
         log.debug("connecting to azure blob storage via access key");
-        final String connectionStringWithAccountKey = UtilsV12.getConnectionString(accountName, accountKey, blobEndpoint);
-        return UtilsV12.getBlobContainerFromConnectionString(connectionStringWithAccountKey, containerName, retryOptions, httpClient);
+        final String connectionStringWithAccountKey = UtilsV12.createConnectionString(accountName, accountKey, blobEndpoint);
+        return UtilsV12.createBlobContainerFromConnectionString(connectionStringWithAccountKey, containerName, retryOptions, httpClient);
     }
 
     @NotNull

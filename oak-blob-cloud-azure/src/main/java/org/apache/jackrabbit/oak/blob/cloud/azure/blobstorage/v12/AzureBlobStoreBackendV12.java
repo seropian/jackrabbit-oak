@@ -336,7 +336,7 @@ class AzureBlobStoreBackendV12 extends AbstractSharedBackend {
         if (properties.getProperty(AzureConstantsV12.AZURE_BLOB_REQUEST_TIMEOUT) != null) {
             requestTimeout = PropertiesUtil.toInteger(properties.getProperty(AzureConstantsV12.AZURE_BLOB_REQUEST_TIMEOUT), AZURE_BLOB_DEFAULT_REQUEST_TIMEOUT);
         }
-        retryOptions = UtilsV12.getRetryOptions(properties.getProperty(AzureConstantsV12.AZURE_BLOB_MAX_REQUEST_RETRY), requestTimeout, computeSecondaryLocationEndpoint());
+        retryOptions = UtilsV12.createRetryOptions(properties.getProperty(AzureConstantsV12.AZURE_BLOB_MAX_REQUEST_RETRY), requestTimeout, computeSecondaryLocationEndpoint());
 
         azureBlobContainerProvider = AzureBlobContainerProviderV12.Builder
                 .builder(properties.getProperty(AzureConstantsV12.AZURE_BLOB_CONTAINER_NAME))
