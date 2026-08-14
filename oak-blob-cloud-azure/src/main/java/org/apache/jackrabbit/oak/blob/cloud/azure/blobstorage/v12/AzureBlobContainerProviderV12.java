@@ -76,6 +76,9 @@ class AzureBlobContainerProviderV12 {
     // endpoint (N = number of parts). Azure allows keys valid up to 7 days.
     // Package-private for test injection.
     final AtomicReference<CachedDelegationKey> cachedDelegationKey = new AtomicReference<>();
+    // Set to true by close(); checked inside each synchronized block so that a concurrent
+    // initializer thread doesn't re-populate a reference after it's been nulled out.
+    private volatile boolean closed = false;
 
     // Request keys for the full 7-day window so they cover any SAS expiry we'd generate.
     // Also the hard upper bound Azure allows for a user delegation key's lifetime — package-private
@@ -231,7 +234,10 @@ class AzureBlobContainerProviderV12 {
         if (cached != null && cached.expiry.isAfter(sasExpiry.plus(DELEGATION_KEY_RENEWAL_BUFFER))) {
             return cached.key;
         }
-        synchronized (this) {
+        synchronized (cachedDelegationKey) {
+            if (closed) {
+                throw new IllegalStateException("provider is closed");
+            }
             // Re-check inside the lock — another thread may have refreshed while we waited.
             cached = cachedDelegationKey.get();
             if (cached != null && cached.expiry.isAfter(sasExpiry.plus(DELEGATION_KEY_RENEWAL_BUFFER))) {
@@ -263,7 +269,10 @@ class AzureBlobContainerProviderV12 {
         // Non-SP auth: cache one container client per activation (signing never makes HTTP calls).
         BlobContainerClient container = cachedContainerForSigning.get();
         if (container == null) {
-            synchronized (this) {
+            synchronized (cachedContainerForSigning) {
+                if (closed) {
+                    throw new IllegalStateException("provider is closed");
+                }
                 container = cachedContainerForSigning.get();
                 if (container == null) {
                     container = getBlobContainer();
@@ -279,11 +288,22 @@ class AzureBlobContainerProviderV12 {
      * (the Azure SDK {@link com.azure.core.http.HttpClient} interface has no close contract), but
      * clearing the references allows GC to reclaim them, preventing accumulation across OSGi
      * restart cycles.
+     * <p>
+     * Each null-set is done under the same monitor used by the corresponding getter, so a thread
+     * that raced past the fast-path check will see {@code closed = true} inside the lock and
+     * refrain from re-populating the reference.
      */
     public void close() {
-        cachedBlobServiceClient.set(null);
-        cachedContainerForSigning.set(null);
-        cachedDelegationKey.set(null);
+        closed = true;
+        synchronized (cachedBlobServiceClient) {
+            cachedBlobServiceClient.set(null);
+        }
+        synchronized (cachedContainerForSigning) {
+            cachedContainerForSigning.set(null);
+        }
+        synchronized (cachedDelegationKey) {
+            cachedDelegationKey.set(null);
+        }
         log.debug("AzureBlobContainerProviderV12 closed; cached Azure clients released");
     }
 
@@ -297,7 +317,10 @@ class AzureBlobContainerProviderV12 {
     private BlobServiceClient getOrCreateBlobServiceClient() {
         BlobServiceClient client = cachedBlobServiceClient.get();
         if (client == null) {
-            synchronized (this) {
+            synchronized (cachedBlobServiceClient) {
+                if (closed) {
+                    throw new IllegalStateException("provider is closed");
+                }
                 client = cachedBlobServiceClient.get();
                 if (client == null) {
                     BlobServiceClientBuilder builder = new BlobServiceClientBuilder()
