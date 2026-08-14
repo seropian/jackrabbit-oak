@@ -97,11 +97,11 @@ class AzureBlobContainerProviderV12 {
         this.tenantId = builder.tenantId;
         this.clientId = builder.clientId;
         this.clientSecret = builder.clientSecret;
-        this.clientSecretCredential = StringUtils.isNoneBlank(builder.clientId, builder.clientSecret, builder.tenantId)
+        this.clientSecretCredential = authenticateViaServicePrincipal()
                 ? new ClientSecretCredentialBuilder()
-                .clientId(builder.clientId)
-                .clientSecret(builder.clientSecret)
-                .tenantId(builder.tenantId)
+                .clientId(this.clientId)
+                .clientSecret(this.clientSecret)
+                .tenantId(this.tenantId)
                 .build()
                 : null;
         this.retryOptions = builder.retryOptions;
