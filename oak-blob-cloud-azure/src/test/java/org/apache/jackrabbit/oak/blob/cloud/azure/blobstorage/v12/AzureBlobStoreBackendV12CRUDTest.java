@@ -86,6 +86,10 @@ public class AzureBlobStoreBackendV12CRUDTest {
             protected BlobContainerClient getAzureContainer() {
                 return container;
             }
+            @Override
+            protected BlobContainerClient createContainerClient() {
+                return container;
+            }
         };
     }
 

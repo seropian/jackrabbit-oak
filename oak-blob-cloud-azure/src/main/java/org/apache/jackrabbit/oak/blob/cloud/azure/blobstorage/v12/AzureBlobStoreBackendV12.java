@@ -178,23 +178,18 @@ class AzureBlobStoreBackendV12 extends AbstractSharedBackend {
         this.properties = properties;
     }
 
-    // Lazy: retryOptions and azureBlobContainerProvider aren't set until initContainerConnection() runs.
     protected BlobContainerClient getAzureContainer() throws DataStoreException {
-        BlobContainerClient existing = azureContainerReference.get();
-        if (existing != null) {
-            return existing;
+        BlobContainerClient c = azureContainerReference.get();
+        if (c == null) {
+            throw new IllegalStateException("Azure container not initialized; call init() before use");
         }
-        // Synchronize so getBlobContainer() (which allocates a Netty event loop) is called
-        // at most once — the previous non-synchronized compareAndSet could lose a race and
-        // silently discard a fully initialised client including its event loop group.
-        synchronized (this) {
-            existing = azureContainerReference.get();
-            if (existing == null) {
-                existing = azureBlobContainerProvider.getBlobContainer();
-                azureContainerReference.set(existing);
-            }
-            return existing;
-        }
+        return c;
+    }
+
+    // Builds the initial container client during init(). Protected so tests can inject a mock
+    // without needing a live Azure endpoint.
+    protected BlobContainerClient createContainerClient() throws DataStoreException {
+        return azureBlobContainerProvider.getBlobContainer();
     }
 
     // Swaps Thread Class Context Loader to this bundle's classloader so Azure SDK's ServiceLoader-based SPI discovery works in OSGi.
@@ -269,7 +264,8 @@ class AzureBlobStoreBackendV12 extends AbstractSharedBackend {
         presignedDownloadURIVerifyExists = PropertiesUtil.toBoolean(
                 emptyToNull(properties.getProperty(AzureConstantsV12.PRESIGNED_HTTP_DOWNLOAD_URI_VERIFY_EXISTS)), true);
 
-        BlobContainerClient azureContainer = getAzureContainer();
+        azureContainerReference.set(createContainerClient());
+        BlobContainerClient azureContainer = azureContainerReference.get();
 
         try {
             if (createBlobContainer && Boolean.FALSE.equals(azureContainer.exists())) {
