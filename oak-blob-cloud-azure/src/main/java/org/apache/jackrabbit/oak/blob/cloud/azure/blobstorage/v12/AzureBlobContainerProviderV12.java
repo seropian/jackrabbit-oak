@@ -204,7 +204,7 @@ class AzureBlobContainerProviderV12 {
         BlockBlobClient blob = getBlockBlobClientForSigning(key);
 
         if (authenticateViaServicePrincipal()) {
-            return generateUserDelegationKeySignedSas(blob, serviceSasSignatureValues, expiry, properties);
+            return generateUserDelegationKeySignedSas(blob, serviceSasSignatureValues, expiry);
         }
         return generateSas(blob, serviceSasSignatureValues);
     }
@@ -212,8 +212,7 @@ class AzureBlobContainerProviderV12 {
     @NotNull
     public String generateUserDelegationKeySignedSas(BlockBlobClient blobClient,
                                                      BlobServiceSasSignatureValues serviceSasSignatureValues,
-                                                     OffsetDateTime expiryTime,
-                                                     Properties properties) {
+                                                     OffsetDateTime expiryTime) {
 
         BlobServiceClient blobServiceClient = getOrCreateBlobServiceClient();
         UserDelegationKey userDelegationKey = getOrRefreshDelegationKey(blobServiceClient, expiryTime);
